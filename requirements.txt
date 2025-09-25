@@ -62,6 +62,7 @@ psutil==7.1.0
 ptyprocess==0.7.0
 pure_eval==0.2.3
 pycparser==2.23
+pydub==0.25.1
 Pygments==2.19.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
