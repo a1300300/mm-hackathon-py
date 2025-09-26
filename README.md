@@ -6,4 +6,4 @@
 * ffmpeg (`sudo apt install ffmpe`)
 
 ## run notebook
-`jupyter notebook --no-browser --port 1234`
+`jupyter notebook --no-browser --port 8800 --ip=0.0.0.0`
