@@ -114,7 +114,7 @@ def refine_srt_with_gemini(srt_text: str) -> str:
     client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = (
         "音訊內容主要為台灣口音的中文。\n"
-        "請直接輸出 SRT 內容，不要包含任何額外的說明文字或代碼塊標記。\n"
+        "請直接輸出 SRT 內容，不要包含任何額外的說明文字或代碼塊標記，然後不需要有標點符號\n"
         "我們公司名稱是財經M平方，請判斷是否產生對的公司名稱。\n"
         "然後音檔是關於總體經濟的話題，因此會提到很多經濟、財經等名詞。\n"
         "並且也包含各國央行鷹鴿派走向、商品以及指數的走勢、行情等等的分析。\n"
@@ -136,13 +136,14 @@ def refine_srt_with_gemini(srt_text: str) -> str:
     return response.text
 
 ### 更改為要轉檔的mp3檔案名稱
-input_mp3 = 'my_CH_002.mp3'
+input_mp3 = 'cut2.mp3'
 input_path = './input_files/' + input_mp3
 
 if not os.path.isfile(input_path):
     raise RuntimeError("MP3檔案不存在")
 
 # 分割mp3檔，設定每分鐘做分割
+print('分割mp3檔案')
 mins = 20
 chunk_length = 60 * 1000 * mins # 分鐘
 
