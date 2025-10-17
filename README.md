@@ -7,3 +7,9 @@
 
 ## run notebook
 `jupyter notebook --no-browser --port 8800 --ip=0.0.0.0`
+
+## 編輯錯誤文字字典
+直接在error_dict.txt這個檔案內編輯
+格式為: 錯字=>正確字
+
+如: 房地美=>房利美

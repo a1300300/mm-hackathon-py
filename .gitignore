@@ -208,3 +208,5 @@ __marimo__/
 
 # Jetbrains
 .idea/*
+
+error_dict.txt

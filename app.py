@@ -108,6 +108,21 @@ def apply_error_dictionary(text: str) -> str:
     return text
 
 
+def apply_error_dictionary2(text: str) -> str:
+    if not os.path.isfile('./error_dict.txt'):
+        raise RuntimeError("找無錯誤字典(error_dict.txt)")
+
+    with open('./error_dict.txt', 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+        for line in lines:
+            line = line.strip()
+            k, v = line.split('=>')
+
+            text = text.replace(k, v)
+
+    return text
+
 def refine_srt_with_gemini(srt_text: str) -> str:
     from google import genai
 
@@ -135,54 +150,70 @@ def refine_srt_with_gemini(srt_text: str) -> str:
 
     return response.text
 
-### 更改為要轉檔的mp3檔案名稱
-input_mp3 = 'cut2.mp3'
-input_path = './input_files/' + input_mp3
 
-if not os.path.isfile(input_path):
-    raise RuntimeError("MP3檔案不存在")
+if __name__ == '__main__':
+    ### 更改為要轉檔的mp3檔案名稱
+    input_mp3 = '1009_Podcast.mp3'
+    input_path = './input_files/' + input_mp3
 
-# 分割mp3檔，設定每分鐘做分割
-print('分割mp3檔案')
-mins = 20
-chunk_length = 60 * 1000 * mins # 分鐘
+    if not os.path.isfile(input_path):
+        raise RuntimeError("MP3檔案不存在")
 
-audio = AudioSegment.from_mp3(input_path)
-audio_slices, start_secs = split_audio(source=audio, length=chunk_length)
+    # 分割mp3檔，設定每分鐘做分割
+    print('分割mp3檔案')
+    mins = 15
+    chunk_length = 60 * 1000 * mins # 分鐘
 
-srt_contents = []
-# 先產生字幕再結合
-for idx, audio_slice in enumerate(audio_slices):
-    print(f"Processing chunk {idx + 1}/{len(audio_slices)}")
+    audio = AudioSegment.from_mp3(input_path)
+    audio_slices, start_secs = split_audio(source=audio, length=chunk_length)
 
-    file_path = f"./tmp/chunk_{idx + 1}.mp3"
-    audio_slice.export(file_path, format="mp3")
+    srt_contents = []
+    # 先產生字幕再結合
+    for idx, audio_slice in enumerate(audio_slices):
+        print(f"Processing chunk {idx + 1}/{len(audio_slices)}")
 
-    srt_contents.append(transcribe_audio(file_path))
+        file_path = f"./tmp/chunk_{idx + 1}.mp3"
+        audio_slice.export(file_path, format="mp3")
 
-# Merge SRT contents
-print('結合字幕檔')
-srt_filename = './output_files/' + os.path.splitext(input_mp3)[0] + ".srt"
-if len(srt_contents) == 1:
-    # Single file, no need to merge
-    final_srt = srt_contents[0]
-else:
-    # Multiple chunks, merge with timestamp adjustment
-    final_srt = merge_srt_files(srt_contents, start_secs)
-
-# 先做本地名詞/錯字替換
-print('先做本地名詞/錯字替換')
-final_srt = apply_error_dictionary(final_srt)
-try:
-    print('再交給 Gemini 清理贅字與公司名校正')
-    final_srt = refine_srt_with_gemini(final_srt)
-except Exception as e:
-    # 若 Gemini 呼叫失敗，保留本地修正版，並輸出警告
-    print(f"[Warn] Gemini refine failed: {e}")
+        srt_contents.append(transcribe_audio(file_path))
 
 
-# Write a final SRT file
-with open(srt_filename, '+w', encoding='utf-8') as f:
-    f.write(final_srt)
+    # 備存個別srt檔案到tmp
+    print('備存個別srt檔案到tmp')
+    for idx, content in enumerate(srt_contents):
+        with open(f"./tmp/chunk_{idx + 1}.srt", 'w', encoding='utf-8') as f:
+            f.write(content)
 
-print('完成輸出, 路徑:'+srt_filename)
+    # Merge SRT contents
+    print('結合字幕檔')
+    srt_filename = './output_files/' + os.path.splitext(input_mp3)[0] + ".srt"
+    if len(srt_contents) == 1:
+        # Single file, no need to merge
+        final_srt = srt_contents[0]
+    else:
+        # Multiple chunks, merge with timestamp adjustment
+        final_srt = merge_srt_files(srt_contents, start_secs)
+
+    # 先做本地名詞/錯字替換
+    print('先做本地名詞/錯字替換')
+    final_srt = apply_error_dictionary2(final_srt)
+
+    # 備存結合的字幕檔至tmp
+    print('備存結合的字幕檔至tmp')
+    tmp_final_srt_filename = './tmp/' + os.path.splitext(input_mp3)[0] + ".srt"
+    with open(srt_filename, '+w', encoding='utf-8') as f:
+        f.write(final_srt)
+
+    # 再交給 Gemini 清理贅字與公司名校正
+    # try:
+    #     print('再交給 Gemini 清理贅字與公司名校正')
+    #     final_srt = refine_srt_with_gemini(final_srt)
+    # except Exception as e:
+    #     # 若 Gemini 呼叫失敗，保留本地修正版，並輸出警告
+    #     print(f"[Warn] Gemini refine failed: {e}")
+    #
+    # # Write a final SRT file
+    # with open(srt_filename, '+w', encoding='utf-8') as f:
+    #     f.write(final_srt)
+
+    print('完成輸出, 路徑:'+srt_filename)
