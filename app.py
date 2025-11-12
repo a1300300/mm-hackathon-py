@@ -128,14 +128,18 @@ def refine_srt_with_gemini(srt_text: str) -> str:
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = (
-        "音訊內容主要為台灣口音的中文。\n"
-        "請直接輸出 SRT 內容，不要包含任何額外的說明文字或代碼塊標記，然後不需要有標點符號\n"
-        "我們公司名稱是財經M平方，請判斷是否產生對的公司名稱。\n"
-        "然後音檔是關於總體經濟的話題，因此會提到很多經濟、財經等名詞。\n"
-        "並且也包含各國央行鷹鴿派走向、商品以及指數的走勢、行情等等的分析。\n"
-        "除此之外希望可以移除贅字如還有、然後、嗯嗯等等的。\n"
-        "另外重要的是，盡量不要摻雜簡體中文的用詞。\n"
-        "以下是原始 SRT，請在保留原時間戳的前提下，針對文字做整理與修正：\n\n"
+        "以下是原始音訊的 SRT 字幕內容，請在保留原始字幕格式的前提下，針對每一行文字做修飾但不要更改太多：\n\n"
+        "1. 不需要有標點符號\n"
+        "2. 我們公司名稱是財經M平方，請判斷是否產生對的公司名稱。\n"
+        "3. 然後字幕的內容是關於總體經濟的話題，因此會提到很多經濟、財經等名詞。\n"
+        "4. 並且也包含各國央行鷹鴿派走向、商品以及指數的走勢、行情等等的分析。\n"
+        "5. 除此之外希望可以移除贅字如還有、然後、嗯嗯等等的。\n"
+        "6. 不要摻雜簡體中文的用詞。\n"
+        "7. 請勿自行合併多行字幕句子變成一段秒數很長的長句子。\n"
+        "8. 呈上一點，但也不要把原本一行的句子拆成多句。\n"
+        "9. 輸出的字幕檔的格式不要跑掉，例如原本句子之間的空行不要自行拿掉。\n"
+        "字幕內容如下: \n"
+       
         f"{srt_text}"
     )
 
@@ -153,7 +157,7 @@ def refine_srt_with_gemini(srt_text: str) -> str:
 
 if __name__ == '__main__':
     ### 更改為要轉檔的mp3檔案名稱
-    input_mp3 = '1009_Podcast.mp3'
+    input_mp3 = '1017_Podcast_v2.mp3'
     input_path = './input_files/' + input_mp3
 
     if not os.path.isfile(input_path):
@@ -161,7 +165,7 @@ if __name__ == '__main__':
 
     # 分割mp3檔，設定每分鐘做分割
     print('分割mp3檔案')
-    mins = 15
+    mins = 5
     chunk_length = 60 * 1000 * mins # 分鐘
 
     audio = AudioSegment.from_mp3(input_path)
@@ -175,14 +179,33 @@ if __name__ == '__main__':
         file_path = f"./tmp/chunk_{idx + 1}.mp3"
         audio_slice.export(file_path, format="mp3")
 
-        srt_contents.append(transcribe_audio(file_path))
+        print('OpenAI 產生字幕檔')
+        srt_content = transcribe_audio(file_path)
 
-
-    # 備存個別srt檔案到tmp
-    print('備存個別srt檔案到tmp')
-    for idx, content in enumerate(srt_contents):
+        # 備存個別srt檔案到tmp
+        print('備存個別srt檔案到tmp')
         with open(f"./tmp/chunk_{idx + 1}.srt", 'w', encoding='utf-8') as f:
-            f.write(content)
+            f.write(srt_content)
+
+             # 先做本地名詞/錯字替換
+            print('先做本地名詞/錯字替換')
+            srt_content = apply_error_dictionary2(srt_content)
+
+        # 再交給 Gemini 校正文字
+        try:
+            print('再交給 Gemini 校正文字')
+            srt_content = refine_srt_with_gemini(srt_content)
+
+            # 備存校正後的字幕檔至tmp
+            print('備存結合的字幕檔至tmp')
+            fined_srt_filename = f"./tmp/fined_{idx + 1}.srt"
+            with open(fined_srt_filename, '+w', encoding='utf-8') as f:
+                f.write(srt_content)
+        except Exception as e:
+            # 若 Gemini 呼叫失敗，保留本地修正版，並輸出警告
+            print(f"[Warn] Gemini refine failed: {e}")
+
+        srt_contents.append(srt_content)
 
     # Merge SRT contents
     print('結合字幕檔')
@@ -194,26 +217,8 @@ if __name__ == '__main__':
         # Multiple chunks, merge with timestamp adjustment
         final_srt = merge_srt_files(srt_contents, start_secs)
 
-    # 先做本地名詞/錯字替換
-    print('先做本地名詞/錯字替換')
-    final_srt = apply_error_dictionary2(final_srt)
-
-    # 備存結合的字幕檔至tmp
-    print('備存結合的字幕檔至tmp')
-    tmp_final_srt_filename = './tmp/' + os.path.splitext(input_mp3)[0] + ".srt"
+    # Write a final SRT file
     with open(srt_filename, '+w', encoding='utf-8') as f:
         f.write(final_srt)
-
-    # 再交給 Gemini 清理贅字與公司名校正
-    # try:
-    #     print('再交給 Gemini 清理贅字與公司名校正')
-    #     final_srt = refine_srt_with_gemini(final_srt)
-    # except Exception as e:
-    #     # 若 Gemini 呼叫失敗，保留本地修正版，並輸出警告
-    #     print(f"[Warn] Gemini refine failed: {e}")
-    #
-    # # Write a final SRT file
-    # with open(srt_filename, '+w', encoding='utf-8') as f:
-    #     f.write(final_srt)
 
     print('完成輸出, 路徑:'+srt_filename)
