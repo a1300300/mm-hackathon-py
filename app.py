@@ -137,7 +137,8 @@ def refine_srt_with_gemini(srt_text: str) -> str:
         "6. 除此之外希望可以移除贅字如還有、然後、嗯嗯等等的。\n"
         "7. 不要摻雜簡體中文的用詞。\n"
         "8. 輸出的字幕檔的格式不要跑掉，例如原本句子之間的空行不要自行拿掉。\n"
-        "9. 結尾配樂的地方就不需要自行上字幕了\n\n"
+        "9. 確保每一句時間軸的時間順序是正確的、不變的。不要出現這一句的時間軸早於上一句的時間軸的狀況。\n"
+        "10. 結尾配樂的地方就不需要自行上字幕了\n\n"
         "字幕內容如下: \n"
         f"{srt_text}"
     )
@@ -156,7 +157,7 @@ def refine_srt_with_gemini(srt_text: str) -> str:
 
 if __name__ == '__main__':
     ### 更改為要轉檔的mp3檔案名稱
-    input_mp3 = 'ralice.mp3'
+    input_mp3 = '1030_Podcast.mp3'
     input_path = './input_files/' + input_mp3
 
     if not os.path.isfile(input_path):
