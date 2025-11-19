@@ -125,32 +125,35 @@ def apply_error_dictionary2(text: str) -> str:
 
 def refine_srt_with_gemini(srt_text: str) -> str:
     from google import genai
+    from google.genai import types
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = (
-        "想像你是一位字幕審查員，我會提供你繁體中文字幕的內容，請遵守以下十點規則來修改：\n\n"
+        "上面內容是繁體中文字幕，請遵守以下十點規則來修改：\n\n"
         "1. 第一點最重要: 拜託不要自行合併多行字幕句子變成一段很長的字幕;換句換說，不要擅自合併多個時間軸成單一時間軸，因為這樣一行字幕會被拉得很長。一行字幕最多不要超過5秒\n"
         "2. 第二點也很重要: 拜託不要更改每一行字幕的時間軸秒數，要跟原本的來源秒數一樣。\n"
-        "3. 一行一行的檢查並視情況做修改。\n"
-        "4. 字幕不需要有標點符號\n"
-        "5. 我們公司名稱是財經M平方，請判斷是否產生對的公司名稱。\n"
+        "3. 一行一行的檢查並視情況做修改，如果有標點符號請拿掉。\n"
+        "4. 我們公司名稱是財經M平方，請判斷是否產生對的公司名稱。\n"
+        "5. 常出現的英文名字名單為: Rachel, Roger, Ryan, Vivianna, Dylan, Jat, Jason, Danny, Ralice"
         "6. 然後字幕的內容是關於總體經濟的話題，因此會提到很多經濟、財經、股市、原物料、債券等等相關名詞。\n"
         "7. 並且也包含各國央行鷹鴿派走向、商品以及指數的走勢、行情等等的分析。\n"
         "8. 除此之外希望可以移除贅字如還有、然後、嗯嗯等等的。\n"
         "9. 輸出的字幕檔的格式不要跑掉，例如原本句子之間的空行不要自行拿掉。\n"
-        "10. 結尾配樂的地方就不需要自行上字幕了\n\n"
-        "字幕內容如下: \n"
-        f"{srt_text}"
+        "10. 結尾配樂的地方就不需要自行上字幕了"
     )
 
     response = client.models.generate_content(
         model="gemini-2.5-pro",
+        config=types.GenerateContentConfig(
+            system_instruction="你是一位總體經濟研究員，並且將根據我提供的影片字幕內容進行審查並修飾。"
+        ),
         contents=[
             genai.types.Part.from_bytes(
                 data=bytes(srt_text, 'utf-8'),
                 mime_type='text/plain',
             ),
-            prompt])
+            prompt
+        ])
 
     return response.text
 
