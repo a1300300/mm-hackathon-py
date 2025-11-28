@@ -184,7 +184,7 @@ if __name__ == '__main__':
 
     # 分割mp3檔，設定每分鐘做分割
     print('分割mp3檔案')
-    mins = 10
+    mins = 15
     chunk_length = 60 * 1000 * mins # 分鐘
 
     audio = AudioSegment.from_mp3(input_path)
