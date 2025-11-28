@@ -1,6 +1,8 @@
 from dotenv import load_dotenv, find_dotenv
 from error_dict import error_words
 from pydub import AudioSegment
+from google import genai
+from google.genai import types
 import re, os, openai
 
 # Load variables from the nearest .env file (walking up directories if needed)
@@ -123,11 +125,8 @@ def apply_error_dictionary2(text: str) -> str:
 
     return text
 
-def refine_srt_with_gemini(srt_text: str) -> str:
-    from google import genai
-    from google.genai import types
+def refine_srt_with_gemini(gemini_client: genai.Client, srt_text: str, pdf_file: types.File=None) -> str:
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = (
         "上面內容是繁體中文字幕，請遵守以下十點規則來修改：\n\n"
         "1. 第一點最重要: 拜託不要自行合併多行字幕句子變成一段很長的字幕;換句換說，不要擅自合併多個時間軸成單一時間軸，因為這樣一行字幕會被拉得很長。一行字幕最多不要超過5秒\n"
@@ -139,36 +138,53 @@ def refine_srt_with_gemini(srt_text: str) -> str:
         "7. 並且也包含各國央行鷹鴿派走向、商品以及指數的走勢、行情等等的分析。\n"
         "8. 除此之外希望可以移除贅字如還有、然後、嗯嗯等等的。\n"
         "9. 輸出的字幕檔的格式不要跑掉，例如原本句子之間的空行不要自行拿掉。\n"
-        "10. 結尾配樂的地方就不需要自行上字幕了"
+        "10. 結尾配樂的地方就不需要自行上字幕了\n"
     )
 
-    response = client.models.generate_content(
+    contents: list[types.Part | str | types.File] = [
+        genai.types.Part.from_bytes(
+            data=bytes(srt_text, 'utf-8'),
+            mime_type='text/plain',
+        ),
+        prompt,
+    ]
+
+    if pdf_file is not None:
+        prompt += "11. 以下為這次音檔相關的訪綱，裡面的內容是這次字幕談到的相關內容以及人名，你可以用來參考:\n"
+        contents.append(pdf_file)
+
+    response = gemini_client.models.generate_content(
         model="gemini-2.5-pro",
         config=types.GenerateContentConfig(
             system_instruction="你是一位總體經濟研究員，並且將根據我提供的影片字幕內容進行審查並修飾。"
         ),
-        contents=[
-            genai.types.Part.from_bytes(
-                data=bytes(srt_text, 'utf-8'),
-                mime_type='text/plain',
-            ),
-            prompt
-        ])
+        contents=contents)
 
     return response.text
 
 
 if __name__ == '__main__':
     ### 更改為要轉檔的mp3檔案名稱
-    input_mp3 = 'chunk_7.mp3'
+    input_mp3 = '1127.mp3'
     input_path = './input_files/' + input_mp3
+
+    ### 訪綱pdf檔案名稱
+    input_pdf = '1127.pdf'
+    input_pdf_path = './input_files/' + input_pdf
+
+    # set gemini client
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    pdf_ref = None
+    if os.path.isfile(input_pdf_path):
+        print("載入訪綱")
+        pdf_ref = client.files.upload(file=input_pdf_path)
 
     if not os.path.isfile(input_path):
         raise RuntimeError("MP3檔案不存在")
 
     # 分割mp3檔，設定每分鐘做分割
     print('分割mp3檔案')
-    mins = 5
+    mins = 10
     chunk_length = 60 * 1000 * mins # 分鐘
 
     audio = AudioSegment.from_mp3(input_path)
@@ -203,7 +219,7 @@ if __name__ == '__main__':
         while not is_pass:
             try:
                 print('再交給 Gemini 校正文字')
-                srt_content = refine_srt_with_gemini(srt_content)
+                srt_content = refine_srt_with_gemini(gemini_client=client, srt_text=srt_content, pdf_file=pdf_ref)
 
                 # 備存校正後的字幕檔至tmp
                 print('備存結合的字幕檔至tmp')
