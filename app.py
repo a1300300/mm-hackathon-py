@@ -136,9 +136,9 @@ def refine_srt_with_gemini(gemini_client: genai.Client, srt_text: str, pdf_file:
         "5. 常出現的英文名字名單為: Rachel, Roger, Ryan, Vivianna, Dylan, Jat, Jason, Danny, Ralice"
         "6. 然後字幕的內容是關於總體經濟的話題，因此會提到很多經濟、財經、股市、原物料、債券等等相關名詞。\n"
         "7. 並且也包含各國央行鷹鴿派走向、商品以及指數的走勢、行情等等的分析。\n"
-        # "8. 希望可以移除贅字如: 那個、然後、嗯嗯等等的語助詞; 除此之外，不要自行對句子加工太多，改太多的話字幕文字差太多會跟講的話對不上。\n"
-        "8. 輸出的字幕檔的格式不要跑掉，例如原本句子之間的空行不要自行拿掉。\n"
-        "9. 結尾配樂的地方就不需要自行上字幕了\n"
+        "8. 除此之外希望可以移除贅字如還有、然後、嗯嗯等等的。\n"
+        "9. 輸出的字幕檔的格式不要跑掉，例如原本句子之間的空行不要自行拿掉。\n"
+        "10. 結尾配樂的地方就不需要自行上字幕了\n"
     )
 
     contents: list[types.Part | str | types.File] = [
@@ -150,7 +150,7 @@ def refine_srt_with_gemini(gemini_client: genai.Client, srt_text: str, pdf_file:
     ]
 
     if pdf_file is not None:
-        prompt += "10. 以下為這次音檔相關的訪綱，裡面的內容是這次字幕談到的相關內容以及人名，你可以用來參考:\n"
+        prompt += "11. 以下為這次音檔相關的訪綱，裡面的內容是這次字幕談到的相關內容以及人名，你可以用來參考:\n"
         contents.append(pdf_file)
 
     response = gemini_client.models.generate_content(
@@ -165,11 +165,11 @@ def refine_srt_with_gemini(gemini_client: genai.Client, srt_text: str, pdf_file:
 
 if __name__ == '__main__':
     ### 更改為要轉檔的mp3檔案名稱
-    input_mp3 = '1127.mp3'
+    input_mp3 = '1127_5min.mp3'
     input_path = './input_files/' + input_mp3
 
-    ### 訪綱pdf檔案名稱
-    input_pdf = '1127.pdf'
+    ### 訪綱pdf檔案名稱 (暫時先不使用)
+    input_pdf = ''
     input_pdf_path = './input_files/' + input_pdf
 
     # set gemini client
