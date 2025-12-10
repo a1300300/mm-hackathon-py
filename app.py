@@ -150,7 +150,7 @@ def refine_srt_with_gemini(gemini_client: genai.Client, srt_text: str, pdf_file:
     ]
 
     if pdf_file is not None:
-        prompt += "11. 以下為這次音檔相關的訪綱，裡面的內容是這次字幕談到的相關內容以及人名，你可以用來參考:\n"
+        prompt += "11. 以下為這次音檔相關的訪綱，裡面的內容是這次字幕談到的相關內容以及人名，你可以用來參考。但這只能用來修正人名以及專有名詞，不要再對原來的文字語句及語法進行其他的修飾!!\n"
         contents.append(pdf_file)
 
     response = gemini_client.models.generate_content(
@@ -165,11 +165,11 @@ def refine_srt_with_gemini(gemini_client: genai.Client, srt_text: str, pdf_file:
 
 if __name__ == '__main__':
     ### 更改為要轉檔的mp3檔案名稱
-    input_mp3 = '1127_5min.mp3'
+    input_mp3 = '1204.mp3'
     input_path = './input_files/' + input_mp3
 
     ### 訪綱pdf檔案名稱 (暫時先不使用)
-    input_pdf = ''
+    input_pdf = '1204.pdf'
     input_pdf_path = './input_files/' + input_pdf
 
     # set gemini client
