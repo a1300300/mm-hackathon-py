@@ -1,7 +1,9 @@
+import asyncio
+import json
 import os
 import re
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 from pydub import AudioSegment
 
 
@@ -40,8 +42,8 @@ def split_mp3(input_path: str, dest_dir: str, minutes: int) -> list[str]:
     return dest_paths
 
 
-def transcribe_mp3_to_srt(
-    client: OpenAI,
+async def transcribe_mp3_to_srt(
+    client: AsyncOpenAI,
     mp3_path: str,
     srt_path: str,
     model: str = "whisper-1",
@@ -55,7 +57,7 @@ def transcribe_mp3_to_srt(
     print(f"開始轉錄: {mp3_path}")
 
     with open(mp3_path, "rb") as audio_file:
-        transcription = client.audio.transcriptions.create(
+        transcription = await client.audio.transcriptions.create(
             model=model,
             file=audio_file,
             language="zh",
@@ -77,14 +79,17 @@ def transcribe_mp3_to_srt(
     print(f"已輸出字幕: {srt_path}")
 
 
-def transcribe_missing_srt(
-    client: OpenAI,
+async def transcribe_missing_srt(
+    client: AsyncOpenAI,
     mp3_paths: list[str],
     model: str = "whisper-1",
+    max_concurrency: int = 3,
 ) -> int:
-    """只轉錄尚未產生 SRT 的 MP3，回傳本次新增的字幕數量。"""
-    done_count = 0
+    """並行轉錄尚未產生 SRT 的 MP3，回傳本次新增的字幕數量。"""
+    if max_concurrency <= 0:
+        raise ValueError("max_concurrency 必須大於 0")
 
+    pending_paths = []
     for mp3_path in mp3_paths:
         srt_path = os.path.splitext(mp3_path)[0] + '.srt'
 
@@ -92,15 +97,25 @@ def transcribe_missing_srt(
             print(f"已存在，跳過轉錄: {srt_path}")
             continue
 
-        transcribe_mp3_to_srt(
-            client=client,
-            mp3_path=mp3_path,
-            srt_path=srt_path,
-            model=model,
-        )
-        done_count += 1
+        pending_paths.append((mp3_path, srt_path))
 
-    return done_count
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def transcribe_one(mp3_path: str, srt_path: str) -> None:
+        async with semaphore:
+            await transcribe_mp3_to_srt(
+                client=client,
+                mp3_path=mp3_path,
+                srt_path=srt_path,
+                model=model,
+            )
+
+    await asyncio.gather(
+        *(transcribe_one(mp3_path, srt_path)
+          for mp3_path, srt_path in pending_paths)
+    )
+
+    return len(pending_paths)
 
 
 def apply_error_dictionary2(text: str) -> str:
@@ -124,16 +139,15 @@ LUNA_SYSTEM_INSTRUCTION = (
     '你是一位總體經濟研究員，請根據使用者提供的規則修飾繁體中文字幕。'
 )
 LUNA_PROMPT = (
-    '請逐行檢查下面的繁體中文字幕，並遵守以下規則：\n\n'
-    '1. 最重要：不要合併字幕，也不要把多個時間軸改成單一時間軸；每一行字幕最多不要超過 5 秒。\n'
-    '2. 絕對不要修改任何字幕編號、時間軸、字幕筆數或字幕區塊的順序。\n'
-    '3. 只修改字幕文字；如有標點符號請移除。\n'
-    '4. 公司名稱請使用「財經M平方」。\n'
-    '5. 常出現的英文名字為：Rachel、Roger、Ryan、Vivianna、Dylan、Jat、Jason、Danny、Ralice。\n'
-    '6. 內容是總體經濟、財經、股市、原物料、債券、央行政策、商品與指數走勢。\n'
-    '7. 移除贅字，例如「還有」、「然後」、「嗯嗯」等，但不要改變原意。\n'
-    '8. 結尾配樂等沒有語音的地方不需要新增字幕。\n'
-    '9. 請輸出完整的 SRT 內容，不要加 Markdown code fence 或其他說明文字。\n'
+    '請校正輸入 JSON 中每一筆繁體中文字幕，並遵守以下規則：\n\n'
+    '* 每筆 position 是不可變識別碼，必須原樣輸出且順序不變。\n'
+    '* 每一筆輸入必須恰好對應一筆輸出；禁止新增、刪除、合併或拆分。\n'
+    '* 只能修改 text；如有標點符號請移除。\n'
+    '* 公司名稱請使用「財經M平方」。\n'
+    '* 常出現的英文名字為：Rachel、Roger、Ryan、Vivianna、Dylan、Jat、Jason、Danny、Ralice。\n'
+    '* 內容是總體經濟、財經、股市、原物料、債券、央行政策、商品與指數走勢。\n'
+    '* 可移除「然後」、「嗯嗯」等贅字，但不可改變原意。\n'
+    '* 無法確定如何修改時，原樣保留 text。\n'
 )
 SRT_TIMESTAMP_PATTERN = re.compile(
     r'^\d{2}:\d{2}:\d{2},\d{3} --> '
@@ -146,38 +160,86 @@ SRT_TIMESTAMP_TOKEN_PATTERN = re.compile(
 )
 
 
-def refine_srt_with_luna(client: OpenAI, srt_content: str) -> str:
-    """使用 GPT-5.6 Luna 修飾 SRT，但保留原始時間軸與字幕結構。"""
-    response = client.responses.create(
+async def refine_srt_with_luna(
+    client: AsyncOpenAI,
+    srt_content: str,
+) -> str:
+    """只讓 Luna 修改字幕文字，再組回原始編號與時間軸。"""
+    normalized_content = srt_content.replace('\r\n', '\n').strip()
+    blocks = re.split(r'\n\s*\n', normalized_content)
+    original_blocks = []
+    subtitle_items = []
+
+    for position, block in enumerate(blocks):
+        lines = block.splitlines()
+        if len(lines) < 2 or not SRT_TIMESTAMP_PATTERN.fullmatch(lines[1]):
+            raise ValueError(f'SRT 第 {position + 1} 個區塊格式錯誤')
+
+        original_blocks.append(lines)
+        subtitle_items.append({
+            'position': position,
+            'text': '\n'.join(lines[2:]),
+        })
+
+    response = await client.responses.create(
         model=LUNA_MODEL,
         instructions=LUNA_SYSTEM_INSTRUCTION,
-        input=f'{LUNA_PROMPT}\n--- SRT 開始 ---\n{srt_content}\n--- SRT 結束 ---',
+        input=f'{LUNA_PROMPT}\n輸入 JSON：\n{json.dumps(subtitle_items, ensure_ascii=False)}',
+        text={
+            'format': {
+                'type': 'json_schema',
+                'name': 'refined_subtitles',
+                'strict': True,
+                'schema': {
+                    'type': 'object',
+                    'properties': {
+                        'subtitles': {
+                            'type': 'array',
+                            'minItems': len(subtitle_items),
+                            'maxItems': len(subtitle_items),
+                            'items': {
+                                'type': 'object',
+                                'properties': {
+                                    'position': {'type': 'integer'},
+                                    'text': {'type': 'string'},
+                                },
+                                'required': ['position', 'text'],
+                                'additionalProperties': False,
+                            },
+                        },
+                    },
+                    'required': ['subtitles'],
+                    'additionalProperties': False,
+                },
+            },
+        },
     )
 
-    refined_content = response.output_text.strip()
-    if refined_content.startswith('```') and refined_content.endswith('```'):
-        refined_content = re.sub(
-            r'^```(?:srt)?\s*|\s*```$',
-            '',
-            refined_content,
-            flags=re.IGNORECASE,
-        ).strip()
+    result = json.loads(response.output_text)
+    refined_items = result['subtitles']
+    expected_positions = list(range(len(subtitle_items)))
+    actual_positions = [item['position'] for item in refined_items]
+    if actual_positions != expected_positions:
+        raise ValueError('GPT-5.6 Luna 回傳的字幕數量或順序不正確')
 
-    original_timestamps = SRT_TIMESTAMP_PATTERN.findall(srt_content)
-    refined_timestamps = SRT_TIMESTAMP_PATTERN.findall(refined_content)
-    if original_timestamps != refined_timestamps:
-        raise ValueError('GPT-5.6 Luna 修改了字幕時間軸，拒絕寫入結果')
+    refined_blocks = []
+    for original_lines, refined_item in zip(original_blocks, refined_items):
+        text_lines = refined_item['text'].splitlines()
+        refined_blocks.append('\n'.join(original_lines[:2] + text_lines))
 
-    return refined_content
+    return '\n\n'.join(refined_blocks)
 
 
-def refine_missing_srt_with_luna(
-    client: OpenAI,
+async def refine_missing_srt_with_luna(
+    client: AsyncOpenAI,
     srt_paths: list[str],
+    max_concurrency: int = 3,
 ) -> int:
-    """只修飾尚未產生 _refined.srt 的字幕檔。"""
-    refined_count = 0
+    """並行修飾尚未產生 _refined.srt 的字幕檔。"""
+    if max_concurrency <= 0:
+        raise ValueError("max_concurrency 必須大於 0")
 
+    pending_paths = []
     for srt_path in srt_paths:
         refined_path = os.path.splitext(srt_path)[0] + '_refined.srt'
 
@@ -188,19 +250,29 @@ def refine_missing_srt_with_luna(
         if not os.path.isfile(srt_path):
             raise FileNotFoundError(f'找不到字幕檔，無法修飾: {srt_path}')
 
-        with open(srt_path, 'r', encoding='utf-8') as srt_file:
-            srt_content = srt_file.read()
+        pending_paths.append((srt_path, refined_path))
 
-        print(f'開始使用 GPT-5.6 Luna 修飾: {srt_path}')
-        refined_content = refine_srt_with_luna(client, srt_content)
+    semaphore = asyncio.Semaphore(max_concurrency)
 
-        with open(refined_path, 'w', encoding='utf-8') as refined_file:
-            refined_file.write(refined_content + '\n')
+    async def refine_one(srt_path: str, refined_path: str) -> None:
+        async with semaphore:
+            with open(srt_path, 'r', encoding='utf-8') as srt_file:
+                srt_content = srt_file.read()
 
-        refined_count += 1
-        print(f'已輸出修飾字幕: {refined_path}')
+            print(f'開始使用 GPT-5.6 Luna 修飾: {srt_path}')
+            refined_content = await refine_srt_with_luna(client, srt_content)
 
-    return refined_count
+            with open(refined_path, 'w', encoding='utf-8') as refined_file:
+                refined_file.write(refined_content + '\n')
+
+            print(f'已輸出修飾字幕: {refined_path}')
+
+    await asyncio.gather(
+        *(refine_one(srt_path, refined_path)
+          for srt_path, refined_path in pending_paths)
+    )
+
+    return len(pending_paths)
 
 
 def _srt_timestamp_to_ms(timestamp: str) -> int:
@@ -274,7 +346,7 @@ if __name__ == '__main__':
     load_dotenv()
 
     # 更改為要切割的 MP3 檔案名稱
-    source_mp3 = '0827_Podcast.mp3'
+    source_mp3 = '2603-MEO.mp3'
     source_path = os.path.join('./input_files', source_mp3)
 
     # 每幾分鐘切割一段，可直接修改這裡
@@ -285,7 +357,6 @@ if __name__ == '__main__':
     output_paths = split_mp3(source_path, output_dir, mins)
     print(f'完成，共輸出 {len(output_paths)} 個檔案')
 
-    client = None
     pending_srt_paths = [
         mp3_path
         for mp3_path in output_paths
@@ -300,12 +371,16 @@ if __name__ == '__main__':
                 '找不到 OPENAI_API_KEY，請在 .env 或環境變數中設定'
             )
 
-        client = OpenAI()
-        transcribed_count = transcribe_missing_srt(
-            client=client,
-            mp3_paths=output_paths,
-            model='whisper-1',
-        )
+        async def run_transcriptions() -> int:
+            async with AsyncOpenAI() as async_client:
+                return await transcribe_missing_srt(
+                    client=async_client,
+                    mp3_paths=output_paths,
+                    model='whisper-1',
+                    max_concurrency=3,
+                )
+
+        transcribed_count = asyncio.run(run_transcriptions())
         print(f'完成，共新增 {transcribed_count} 個 SRT 字幕檔')
 
     # 對每一個字幕檔做 apply_error_dictionary2 的初步字詞替換
@@ -340,17 +415,20 @@ if __name__ == '__main__':
     if not pending_refined_paths:
         print('所有 GPT-5.6 Luna 修飾字幕檔都已存在，跳過修飾')
     else:
-        if client is None:
-            if not os.getenv('OPENAI_API_KEY'):
-                raise RuntimeError(
-                    '找不到 OPENAI_API_KEY，請在 .env 或環境變數中設定'
-                )
-            client = OpenAI()
+        if not os.getenv('OPENAI_API_KEY'):
+            raise RuntimeError(
+                '找不到 OPENAI_API_KEY，請在 .env 或環境變數中設定'
+            )
 
-        refined_count = refine_missing_srt_with_luna(
-            client=client,
-            srt_paths=srt_paths,
-        )
+        async def run_refinements() -> int:
+            async with AsyncOpenAI() as async_client:
+                return await refine_missing_srt_with_luna(
+                    client=async_client,
+                    srt_paths=srt_paths,
+                    max_concurrency=3,
+                )
+
+        refined_count = asyncio.run(run_refinements())
         print(f'完成，共新增 {refined_count} 個 GPT-5.6 Luna 修飾字幕檔')
 
     # 最後結合成一個完整的 final 字幕檔。
